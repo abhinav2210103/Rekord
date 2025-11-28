@@ -1,6 +1,6 @@
 import { FlashList } from "@shopify/flash-list";
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Animated, ScrollView, Text, View } from "react-native";
+import React, { useEffect, useMemo, useState } from "react";
+import { ScrollView, Text, View } from "react-native";
 
 const TOTAL_ROWS = 10000;
 const TOTAL_COLS = 100;
@@ -11,6 +11,8 @@ const TABLE_WIDTH = TOTAL_COLS * COL_WIDTH;
 
 const SKELETON_EXTRA_ROWS = 8;
 const INITIAL_SKELETON_ROWS = 20;
+// how many rows to draw in overlay skeleton (just needs to cover screen height)
+const OVERLAY_SKELETON_ROWS = 25;
 
 function SkeletonCell({ dark = false }) {
   return (
@@ -20,8 +22,7 @@ function SkeletonCell({ dark = false }) {
         height: ROW_HEIGHT,
         borderRadius: 4,
         marginRight: 1,
-        // static colors, no animation
-        backgroundColor: dark ? "#cbd5e1" : "#e5e7eb",
+        backgroundColor: dark ? "#cbd5e1" : "#e5e7eb", // darker when scrolling
       }}
     />
   );
@@ -43,14 +44,13 @@ function SkeletonRow({ dark = false }) {
   );
 }
 
-
 function Index() {
   const [baseItems, setBaseItems] = useState([]);
   const [rowsCount, setRowsCount] = useState(PAGE_SIZE);
   const [loadingInitial, setLoadingInitial] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
 
-  // track scroll state
+  // track scroll state (for overlay)
   const [isScrolling, setIsScrolling] = useState(false);
 
   // Fetch base data for cell labels
@@ -58,8 +58,8 @@ function Index() {
     const load = async () => {
       try {
         const res = await fetch("https://dummyjson.com/products?limit=200");
-          const json = await res.json();
-          setBaseItems(json.products || []);
+        const json = await res.json();
+        setBaseItems(json.products || []);
       } catch (e) {
         console.error("Error fetching data", e);
       } finally {
@@ -105,17 +105,12 @@ function Index() {
   }, [rows, loadingMore]);
 
   const renderRow = ({ item }) => {
-    // Skeleton row at bottom while loading more (light)
+    // bottom skeleton rows while loading more
     if (item.type === "skeleton") {
       return <SkeletonRow />;
     }
 
-    // 👉 WHILE SCROLLING: darker skeleton instead of real data
-    if (isScrolling) {
-      return <SkeletonRow dark />;
-    }
-
-    // Normal data row (when NOT scrolling)
+    // always render real data here now
     const rowIndex = item.index;
 
     return (
@@ -174,16 +169,13 @@ function Index() {
         style={{
           flex: 1,
           backgroundColor: "white",
-          padding: 12, // 👉 outer padding
+          padding: 12, // outer padding
         }}
       >
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
           bounces={false}
-          contentContainerStyle={{
-            paddingVertical: 8, // a bit of inner padding
-          }}
         >
           <View style={{ width: TABLE_WIDTH }}>
             {Array.from({ length: INITIAL_SKELETON_ROWS }).map(
@@ -202,7 +194,8 @@ function Index() {
       style={{
         flex: 1,
         backgroundColor: "white",
-        padding: 12, // 👉 outer padding for whole grid
+        padding: 12, // outer padding
+        position: "relative", // needed for overlay
       }}
     >
       {/* single horizontal scroll for whole grid */}
@@ -210,9 +203,6 @@ function Index() {
         horizontal
         showsHorizontalScrollIndicator
         bounces={false}
-        contentContainerStyle={{
-          paddingVertical: 8, // inner vertical padding
-        }}
       >
         <View style={{ width: TABLE_WIDTH }}>
           <FlashList
@@ -226,7 +216,7 @@ function Index() {
             onEndReachedThreshold={0.7}
             onEndReached={handleLoadMore}
             ListFooterComponent={renderFooter}
-            // scroll handlers to flip isScrolling
+            // scroll handlers to control overlay
             onScrollBeginDrag={() => setIsScrolling(true)}
             onMomentumScrollBegin={() => setIsScrolling(true)}
             onScrollEndDrag={() => setIsScrolling(false)}
@@ -234,6 +224,34 @@ function Index() {
           />
         </View>
       </ScrollView>
+
+      {/* 🔥 FULL OVERLAY SKELETON WHILE SCROLLING */}
+      {isScrolling && (
+        <View
+          pointerEvents="none"
+          style={{
+            position: "absolute",
+            top: 12,
+            bottom: 12,
+            left: 12,
+            right: 12,
+          }}
+        >
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            bounces={false}
+          >
+            <View style={{ width: TABLE_WIDTH }}>
+              {Array.from({ length: OVERLAY_SKELETON_ROWS }).map(
+                (_, rowIndex) => (
+                  <SkeletonRow key={`overlay-sk-${rowIndex}`} dark />
+                )
+              )}
+            </View>
+          </ScrollView>
+        </View>
+      )}
     </View>
   );
 }
