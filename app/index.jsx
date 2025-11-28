@@ -11,7 +11,6 @@ const TABLE_WIDTH = TOTAL_COLS * COL_WIDTH;
 
 const SKELETON_EXTRA_ROWS = 8;
 const INITIAL_SKELETON_ROWS = 20;
-// how many rows to draw in overlay skeleton (just needs to cover screen height)
 const OVERLAY_SKELETON_ROWS = 25;
 
 function SkeletonCell({ dark = false }) {
@@ -20,11 +19,17 @@ function SkeletonCell({ dark = false }) {
       style={{
         width: COL_WIDTH,
         height: ROW_HEIGHT,
-        borderRadius: 4,
-        marginRight: 1,
-        backgroundColor: dark ? "#cbd5e1" : "#e5e7eb", // darker when scrolling
+        padding: 2, 
       }}
-    />
+    >
+      <View
+        style={{
+          flex: 1,
+          borderRadius: 4,
+          backgroundColor: dark ? "#cbd5e1" : "#e5e7eb",
+        }}
+      />
+    </View>
   );
 }
 
@@ -190,15 +195,14 @@ function Index() {
   }
 
   return (
-    <View
+    <View className="mt-10"
       style={{
         flex: 1,
         backgroundColor: "white",
-        padding: 12, // outer padding
-        position: "relative", // needed for overlay
+        padding: 12, 
+        position: "relative", 
       }}
     >
-      {/* single horizontal scroll for whole grid */}
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator
