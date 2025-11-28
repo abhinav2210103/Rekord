@@ -1,12 +1,12 @@
 import { FlashList } from "@shopify/flash-list";
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ScrollView, Text, View } from "react-native";
 
 const TOTAL_ROWS = 10000;
 const TOTAL_COLS = 100;
 const ROW_HEIGHT = 40;
 const COL_WIDTH = 120;
-const PAGE_SIZE = 200;
+const PAGE_SIZE = 200; // still used if you ever want pagination
 const TABLE_WIDTH = TOTAL_COLS * COL_WIDTH;
 
 const SKELETON_EXTRA_ROWS = 8;
@@ -19,7 +19,7 @@ function SkeletonCell({ dark = false }) {
       style={{
         width: COL_WIDTH,
         height: ROW_HEIGHT,
-        padding: 2, 
+        padding: 1,
       }}
     >
       <View
@@ -51,12 +51,18 @@ function SkeletonRow({ dark = false }) {
 
 function Index() {
   const [baseItems, setBaseItems] = useState([]);
-  const [rowsCount, setRowsCount] = useState(PAGE_SIZE);
+  // ⬇️ Start with ALL 10,000 rows logically available
+  const [rowsCount, setRowsCount] = useState(TOTAL_ROWS);
   const [loadingInitial, setLoadingInitial] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
 
   // track scroll state (for overlay)
   const [isScrolling, setIsScrolling] = useState(false);
+
+  // 🔍 log which items are visible using FlashList’s viewability API
+  const viewabilityConfig = useRef({
+    itemVisiblePercentThreshold: 10, // consider item "visible" if 10% is on screen
+  }).current;
 
   // Fetch base data for cell labels
   useEffect(() => {
@@ -85,17 +91,20 @@ function Index() {
     return `${baseTitle} (${row},${col})`;
   };
 
+  // logical row indices [0..rowsCount-1]
   const rows = useMemo(
     () => Array.from({ length: rowsCount }, (_, i) => i),
     [rowsCount]
   );
 
+  // FlashList data: real rows + optional skeleton rows at bottom
   const data = useMemo(() => {
     const realRows = rows.map((index) => ({
       type: "row",
       index,
     }));
 
+    // since we start with all rows, you can even set loadingMore = false always
     if (!loadingMore) return realRows;
 
     const skeletonRows = Array.from(
@@ -109,13 +118,28 @@ function Index() {
     return [...realRows, ...skeletonRows];
   }, [rows, loadingMore]);
 
+  // 🔍 LOG DATA STATS (total rows & cells)
+  useEffect(() => {
+    const realRowsCount = rows.length;
+    const totalCells = realRowsCount * TOTAL_COLS;
+    const skeletonCount = data.length - realRowsCount;
+
+    console.log("=== DATA STATS ===");
+    console.log("MAX rows supported (TOTAL_ROWS):", TOTAL_ROWS);
+    console.log("Total logical rows available right now (rowsCount):", realRowsCount);
+    console.log("Skeleton items in data:", skeletonCount);
+    console.log("Total items passed to FlashList (real + skeleton):", data.length);
+    console.log("Columns per row (TOTAL_COLS):", TOTAL_COLS);
+    console.log("Total theoretical cells (rows * cols):", totalCells);
+  }, [rows, data]);
+
   const renderRow = ({ item }) => {
     // bottom skeleton rows while loading more
     if (item.type === "skeleton") {
       return <SkeletonRow />;
     }
 
-    // always render real data here now
+    // real data row
     const rowIndex = item.index;
 
     return (
@@ -144,15 +168,22 @@ function Index() {
     );
   };
 
+  // This won't really be used now because rowsCount starts at TOTAL_ROWS
   const handleLoadMore = () => {
     if (loadingMore) return;
-    if (rowsCount >= TOTAL_ROWS) return;
+    if (rowsCount >= TOTAL_ROWS) return; // guard will always hit now
+
+    console.log("=== LOAD MORE TRIGGERED ===");
+    console.log("Current rowsCount:", rowsCount);
 
     setLoadingMore(true);
 
-    // simulate network delay
     setTimeout(() => {
-      setRowsCount((prev) => Math.min(prev + PAGE_SIZE, TOTAL_ROWS));
+      setRowsCount((prev) => {
+        const next = Math.min(prev + PAGE_SIZE, TOTAL_ROWS);
+        console.log("New rowsCount after load more:", next);
+        return next;
+      });
       setLoadingMore(false);
     }, 600);
   };
@@ -167,6 +198,44 @@ function Index() {
     );
   };
 
+  // 📏 SCROLL HANDLER: logs height from top
+  const handleScroll = (event) => {
+    const offsetY = event.nativeEvent.contentOffset.y;
+    const visibleHeight = event.nativeEvent.layoutMeasurement.height;
+    const contentHeight = event.nativeEvent.contentSize.height;
+
+    console.log("=== SCROLL POSITION ===");
+    console.log("Scroll offset Y (px from top):", offsetY);
+    console.log("Visible window height:", visibleHeight);
+    console.log("Total content height:", contentHeight);
+  };
+
+  // 👀 VIEWABILITY HANDLER: logs which rows are actually visible on screen
+  const handleViewableItemsChanged = useRef(({ viewableItems }) => {
+    // only count real data rows, ignore skeleton items
+    const visibleRowIndices = viewableItems
+      .filter((v) => v.item.type === "row")
+      .map((v) => v.item.index)
+      .sort((a, b) => a - b);
+
+    if (visibleRowIndices.length === 0) return;
+
+    const firstVisible = visibleRowIndices[0];
+    const lastVisible = visibleRowIndices[visibleRowIndices.length - 1];
+
+    console.log("=== VIRTUALIZATION DEBUG ===");
+    console.log("Total logical rows (rowsCount):", rowsCount);
+    console.log("Visible rows currently on screen:", visibleRowIndices.length);
+    console.log("First visible row index:", firstVisible);
+    console.log("Last visible row index:", lastVisible);
+    console.log("Visible row indices:", visibleRowIndices);
+    console.log(
+      "NOTE: Only this small set of rows is mounted, not all",
+      rowsCount,
+      "rows."
+    );
+  }).current;
+
   // Full-screen skeleton GRID for initial load (every cell)
   if (loadingInitial) {
     return (
@@ -174,7 +243,7 @@ function Index() {
         style={{
           flex: 1,
           backgroundColor: "white",
-          padding: 12, // outer padding
+          padding: 12,
         }}
       >
         <ScrollView
@@ -195,19 +264,16 @@ function Index() {
   }
 
   return (
-    <View className="mt-10"
+    <View
+      className="mt-10"
       style={{
         flex: 1,
         backgroundColor: "white",
-        padding: 12, 
-        position: "relative", 
+        padding: 12,
+        position: "relative",
       }}
     >
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator
-        bounces={false}
-      >
+      <ScrollView horizontal showsHorizontalScrollIndicator bounces={false}>
         <View style={{ width: TABLE_WIDTH }}>
           <FlashList
             data={data}
@@ -220,11 +286,14 @@ function Index() {
             onEndReachedThreshold={0.7}
             onEndReached={handleLoadMore}
             ListFooterComponent={renderFooter}
-            // scroll handlers to control overlay
             onScrollBeginDrag={() => setIsScrolling(true)}
             onMomentumScrollBegin={() => setIsScrolling(true)}
             onScrollEndDrag={() => setIsScrolling(false)}
             onMomentumScrollEnd={() => setIsScrolling(false)}
+            onScroll={handleScroll}
+            scrollEventThrottle={16}
+            onViewableItemsChanged={handleViewableItemsChanged}
+            viewabilityConfig={viewabilityConfig}
           />
         </View>
       </ScrollView>
