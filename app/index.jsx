@@ -1,52 +1,75 @@
-import React, { useEffect, useState } from "react";
-import { ScrollView, Text, View } from "react-native";
+import { FlashList } from "@shopify/flash-list";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { Animated, ScrollView, Text, View } from "react-native";
 
 const TOTAL_ROWS = 10000;
 const TOTAL_COLS = 100;
 const ROW_HEIGHT = 40;
 const COL_WIDTH = 120;
-const BUFFER = 3;
+const PAGE_SIZE = 200;
+const TABLE_WIDTH = TOTAL_COLS * COL_WIDTH;
 
-export default function Index() {
+const SKELETON_EXTRA_ROWS = 8;
+const INITIAL_SKELETON_ROWS = 20;
+
+function SkeletonCell({ dark = false }) {
+  return (
+    <View
+      style={{
+        width: COL_WIDTH,
+        height: ROW_HEIGHT,
+        borderRadius: 4,
+        marginRight: 1,
+        // static colors, no animation
+        backgroundColor: dark ? "#cbd5e1" : "#e5e7eb",
+      }}
+    />
+  );
+}
+
+function SkeletonRow({ dark = false }) {
+  return (
+    <View
+      style={{
+        flexDirection: "row",
+        width: TABLE_WIDTH,
+        height: ROW_HEIGHT,
+      }}
+    >
+      {Array.from({ length: TOTAL_COLS }).map((_, col) => (
+        <SkeletonCell key={`sk-${col}`} dark={dark} />
+      ))}
+    </View>
+  );
+}
+
+
+function Index() {
   const [baseItems, setBaseItems] = useState([]);
-  const [scrollState, setScrollState] = useState({
-    offsetX: 0,
-    offsetY: 0,
-    viewportWidth: 0,
-    viewportHeight: 0,
-  });
+  const [rowsCount, setRowsCount] = useState(PAGE_SIZE);
+  const [loadingInitial, setLoadingInitial] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
 
+  // track scroll state
+  const [isScrolling, setIsScrolling] = useState(false);
+
+  // Fetch base data for cell labels
   useEffect(() => {
     const load = async () => {
       try {
         const res = await fetch("https://dummyjson.com/products?limit=200");
-        const json = await res.json();
-        setBaseItems(json.products || []);
+          const json = await res.json();
+          setBaseItems(json.products || []);
       } catch (e) {
         console.error("Error fetching data", e);
+      } finally {
+        setTimeout(() => {
+          setLoadingInitial(false);
+        }, 600);
       }
     };
     load();
   }, []);
-
-  const { offsetX, offsetY, viewportWidth, viewportHeight } = scrollState;
-
-  const startRow = Math.max(Math.floor(offsetY / ROW_HEIGHT) - BUFFER, 0);
-  const startCol = Math.max(Math.floor(offsetX / COL_WIDTH) - BUFFER, 0);
-
-  const visibleRowCount =
-    Math.ceil((viewportHeight || 0) / ROW_HEIGHT) + 2 * BUFFER;
-  const visibleColCount =
-    Math.ceil((viewportWidth || 0) / COL_WIDTH) + 2 * BUFFER;
-
-  const endRow = Math.min(startRow + visibleRowCount, TOTAL_ROWS - 1);
-  const endCol = Math.min(startCol + visibleColCount, TOTAL_COLS - 1);
-
-  const rows = [];
-  for (let r = startRow; r <= endRow; r++) rows.push(r);
-
-  const cols = [];
-  for (let c = startCol; c <= endCol; c++) cols.push(c);
 
   const getCellLabel = (row, col) => {
     if (!baseItems || baseItems.length === 0) {
@@ -57,67 +80,162 @@ export default function Index() {
     return `${baseTitle} (${row},${col})`;
   };
 
-  return (
-    <View className="flex-1 bg-white">
-      {/* BOTH SCROLLS ACTIVE */}
-      <ScrollView
-        horizontal
-        scrollEventThrottle={16}
-        onScroll={(e) => {
-          const { contentOffset, layoutMeasurement } = e.nativeEvent;
-          setScrollState((prev) => ({
-            ...prev,
-            offsetX: contentOffset.x,
-            viewportWidth: layoutMeasurement.width,
-          }));
+  const rows = useMemo(
+    () => Array.from({ length: rowsCount }, (_, i) => i),
+    [rowsCount]
+  );
+
+  const data = useMemo(() => {
+    const realRows = rows.map((index) => ({
+      type: "row",
+      index,
+    }));
+
+    if (!loadingMore) return realRows;
+
+    const skeletonRows = Array.from(
+      { length: SKELETON_EXTRA_ROWS },
+      (_, i) => ({
+        type: "skeleton",
+        id: `skeleton-${i}`,
+      })
+    );
+
+    return [...realRows, ...skeletonRows];
+  }, [rows, loadingMore]);
+
+  const renderRow = ({ item }) => {
+    // Skeleton row at bottom while loading more (light)
+    if (item.type === "skeleton") {
+      return <SkeletonRow />;
+    }
+
+    // 👉 WHILE SCROLLING: darker skeleton instead of real data
+    if (isScrolling) {
+      return <SkeletonRow dark />;
+    }
+
+    // Normal data row (when NOT scrolling)
+    const rowIndex = item.index;
+
+    return (
+      <View
+        style={{
+          flexDirection: "row",
+          width: TABLE_WIDTH,
+          height: ROW_HEIGHT,
+        }}
+      >
+        {Array.from({ length: TOTAL_COLS }).map((_, col) => (
+          <View
+            key={`${rowIndex}-${col}`}
+            className="border border-gray-200 items-center justify-center bg-white"
+            style={{
+              width: COL_WIDTH,
+              height: ROW_HEIGHT,
+            }}
+          >
+            <Text className="text-[10px]" numberOfLines={1}>
+              {getCellLabel(rowIndex, col)}
+            </Text>
+          </View>
+        ))}
+      </View>
+    );
+  };
+
+  const handleLoadMore = () => {
+    if (loadingMore) return;
+    if (rowsCount >= TOTAL_ROWS) return;
+
+    setLoadingMore(true);
+
+    // simulate network delay
+    setTimeout(() => {
+      setRowsCount((prev) => Math.min(prev + PAGE_SIZE, TOTAL_ROWS));
+      setLoadingMore(false);
+    }, 600);
+  };
+
+  const renderFooter = () => {
+    if (!loadingMore) return null;
+
+    return (
+      <View style={{ paddingVertical: 8, paddingHorizontal: 16 }}>
+        <SkeletonRow />
+      </View>
+    );
+  };
+
+  // Full-screen skeleton GRID for initial load (every cell)
+  if (loadingInitial) {
+    return (
+      <View
+        style={{
+          flex: 1,
+          backgroundColor: "white",
+          padding: 12, // 👉 outer padding
         }}
       >
         <ScrollView
-          scrollEventThrottle={16}
-          onScroll={(e) => {
-            const { contentOffset, layoutMeasurement } = e.nativeEvent;
-            setScrollState((prev) => ({
-              ...prev,
-              offsetY: contentOffset.y,
-              viewportHeight: layoutMeasurement.height,
-            }));
-          }}
-          onLayout={(e) => {
-            const { width, height } = e.nativeEvent.layout;
-            setScrollState((prev) => ({
-              ...prev,
-              viewportWidth: width,
-              viewportHeight: height,
-            }));
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          bounces={false}
+          contentContainerStyle={{
+            paddingVertical: 8, // a bit of inner padding
           }}
         >
-          <View
-            style={{
-              width: TOTAL_COLS * COL_WIDTH,
-              height: TOTAL_ROWS * ROW_HEIGHT,
-            }}
-          >
-            {rows.map((row) =>
-              cols.map((col) => (
-                <View
-                  key={`${row}-${col}`}
-                  className="absolute border border-gray-200 items-center justify-center bg-white"
-                  style={{
-                    top: row * ROW_HEIGHT,
-                    left: col * COL_WIDTH,
-                    width: COL_WIDTH,
-                    height: ROW_HEIGHT,
-                  }}
-                >
-                  <Text className="text-[10px]" numberOfLines={1}>
-                    {getCellLabel(row, col)}
-                  </Text>
-                </View>
-              ))
+          <View style={{ width: TABLE_WIDTH }}>
+            {Array.from({ length: INITIAL_SKELETON_ROWS }).map(
+              (_, rowIndex) => (
+                <SkeletonRow key={`init-sk-${rowIndex}`} />
+              )
             )}
           </View>
         </ScrollView>
+      </View>
+    );
+  }
+
+  return (
+    <View
+      style={{
+        flex: 1,
+        backgroundColor: "white",
+        padding: 12, // 👉 outer padding for whole grid
+      }}
+    >
+      {/* single horizontal scroll for whole grid */}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator
+        bounces={false}
+        contentContainerStyle={{
+          paddingVertical: 8, // inner vertical padding
+        }}
+      >
+        <View style={{ width: TABLE_WIDTH }}>
+          <FlashList
+            data={data}
+            keyExtractor={(item) =>
+              item.type === "skeleton" ? item.id : `row-${item.index}`
+            }
+            renderItem={renderRow}
+            estimatedItemSize={ROW_HEIGHT}
+            showsVerticalScrollIndicator
+            onEndReachedThreshold={0.7}
+            onEndReached={handleLoadMore}
+            ListFooterComponent={renderFooter}
+            // scroll handlers to flip isScrolling
+            onScrollBeginDrag={() => setIsScrolling(true)}
+            onMomentumScrollBegin={() => setIsScrolling(true)}
+            onScrollEndDrag={() => setIsScrolling(false)}
+            onMomentumScrollEnd={() => setIsScrolling(false)}
+          />
+        </View>
       </ScrollView>
     </View>
   );
 }
+
+export default Index;
